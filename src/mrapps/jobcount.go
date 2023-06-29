@@ -23,6 +23,7 @@ func Map(filename string, contents string) []mr.KeyValue {
 	me := os.Getpid()
 	f := fmt.Sprintf("mr-worker-jobcount-%d-%d", me, count)
 	count++
+	fmt.Println("job count ", count)
 	err := ioutil.WriteFile(f, []byte("x"), 0666)
 	if err != nil {
 		panic(err)

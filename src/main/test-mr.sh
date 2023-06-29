@@ -6,7 +6,15 @@
 
 # comment this out to run the tests without the Go race detector.
 RACE=-race
+# 定义信号处理函数
+interrupt_handler() {
+  echo "接收到中断信号，正在退出..."
+  # 这里可以添加其他自定义的清理操作
+  exit 0
+}
 
+# 设置中断信号的处理函数
+trap interrupt_handler SIGINT
 if [[ "$OSTYPE" = "darwin"* ]]
 then
   if go version | grep 'go1.17.[012345]'
