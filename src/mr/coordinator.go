@@ -74,12 +74,11 @@ type Coordinator struct {
 	// Your definitions here.
 	TaskChannelMap    chan *Task
 	TaskChannelReduce chan *Task
-	// MapNum            int
-	ReduceNum int
-	TaskCount int
-	Metadata  TaskMetaHolder
-	Phase     int
-	Mutex     sync.Mutex
+	ReduceNum         int
+	TaskCount         int
+	Metadata          TaskMetaHolder
+	Phase             int
+	Mutex             sync.Mutex
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -98,7 +97,6 @@ func (c *Coordinator) TellTask(args *Args, reply *Task) error {
 			}
 		default:
 			reply.TaskType = WaitingTask
-			reply.TaskId = 98
 		}
 	} else if c.Phase == ReducePhase {
 		select {
@@ -112,7 +110,6 @@ func (c *Coordinator) TellTask(args *Args, reply *Task) error {
 			}
 		default:
 			reply.TaskType = WaitingTask
-			reply.TaskId = 99
 		}
 	} else if c.Phase == DonePhase {
 		reply.TaskType = TerminalTask
@@ -129,11 +126,6 @@ func (c *Coordinator) TaskDone(args *Args, reply *Task) error {
 		c.Mutex.Unlock()
 		return nil
 	}
-	// if info.Condition != Doing {
-	// 	fmt.Printf("Have Reduplicate %v\n", taskId)
-	// 	c.Mutex.Unlock()
-	// 	return nil
-	// }
 	info.Condition = Done
 	c.Mutex.Unlock()
 	return nil
