@@ -54,8 +54,7 @@ type ApplyMsg struct {
 }
 
 func (a ApplyMsg) String() string {
-	return fmt.Sprintf("Valid is %t, Command is %v, CommandIndex is %v,",
-		a.CommandValid, a.Command, a.CommandIndex)
+	return fmt.Sprintf(" CMD is %v, CI is %v,", a.Command, a.CommandIndex)
 }
 
 type LogEntry struct {
@@ -65,7 +64,7 @@ type LogEntry struct {
 }
 
 func (entry LogEntry) String() string {
-	return fmt.Sprintf("Command is %v, Term is %v", entry.Command, entry.Term)
+	return fmt.Sprintf("CMD is %v, T is %v", entry.Command, entry.Term)
 }
 
 const (
@@ -193,7 +192,7 @@ type RequestVoteArgs struct {
 }
 
 func (args RequestVoteArgs) String() string {
-	return fmt.Sprintf("Term: %d, CandidateId: %d, LastLogIndex: %d, LastLogTerm: %d", args.Term, args.CandidateId,
+	return fmt.Sprintf("T: %d, CandidateId: %d, LastLogIndex: %d, LastLogTerm: %d", args.Term, args.CandidateId,
 		args.LastLogIndex, args.LastLogTerm)
 }
 
@@ -213,15 +212,15 @@ func (reply RequestVoteReply) String() string {
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	// DPrintf("{Node :%v} with term %v receive RequestVote from {Node %v} with term %v", rf.me, rf.currentTerm, args.CandidateId, args.Term)
-	// Your code here (2A, 2B).
-
+	Debug(dVote, "S%d C%d asking for vote, T%d", rf.me, args.CandidateId, args.Term)
 	if args.Term < rf.currentTerm {
 		reply.VoteGranted = false
 		reply.Term = rf.currentTerm
+		Debug(dVote, "S%d Refusing Vote to C%d for T(%d > %d)", rf.me, args.CandidateId, rf.currentTerm, args.Term)
 		return
 	}
 	if args.Term > rf.currentTerm {
+		Debug(dTerm, "S%d T Updated(%d -> %d)", rf.me, rf.currentTerm, args.Term)
 		rf.currentTerm = args.Term
 		rf.changeState(FollowerState)
 	}
@@ -231,8 +230,10 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		reply.VoteGranted = true
 		rf.votedFor = args.CandidateId
 		// DPrintf("{Node %v} votes for {Node %v}", rf.me, args.CandidateId)
+		Debug(dVote, "S%d Grangting Vote to C%d at T%d", rf.me, args.CandidateId, rf.currentTerm)
 		rf.electionTimer.Reset(RandomizedElectionTimeout())
 	} else {
+		Debug(dVote, "S%d Refusing Vote to C%d", rf.me, args.CandidateId)
 		reply.VoteGranted = false
 	}
 }
@@ -311,7 +312,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	if len(rf.log)-1 < args.PrevLogIndex || (rf.log[args.PrevLogIndex].Term != args.PrevLogTerm) {
 		reply.Term = rf.currentTerm
 		reply.Success = false
-		DPrintf("{Node %v} with term %v receive AppendEntries from {Node %v} with term %v, Return False", rf.me, rf.currentTerm, args.LeaderId, args.Term)
+		Debug(dTimer, "S%d  At T%d Received AppEnt From S%d At T%d, Return False",
+			rf.me, rf.currentTerm, args.LeaderId, args.Term)
+		// DPrintf("{Node %v} with term %v receive AppendEntries from {Node %v} with term %v, Return False", rf.me, rf.currentTerm, args.LeaderId, args.Term)
 		return
 	}
 	isDifferent := false
@@ -335,18 +338,21 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.commitIndex = args.LeaderCommit
 		}
 		if rf.commitIndex > oldCommitIndex {
-			DPrintf("{Node %v} change its commitIndex from %v to %v", rf.me, oldCommitIndex, rf.commitIndex)
+			// DPrintf("{Node %v} change its commitIndex from %v to %v", rf.me, oldCommitIndex, rf.commitIndex)
+			Debug(dCommit, "S%d change commitIndex from %d to %d", rf.me, oldCommitIndex, rf.commitIndex)
 			rf.CanApply = true
 			rf.cond.Broadcast()
 		}
 	}
 	reply.Term = rf.currentTerm
 	reply.Success = true
-	DPrintf("AppendEntries RPC Args is %v", args)
+	// DPrintf("AppendEntries RPC Args is %v", args)
 	if len(args.Entries) == 0 {
-		DPrintf("{Node %v} with term %v receive HeartBeat from {Node %v} with term %v", rf.me, rf.currentTerm, args.LeaderId, args.Term)
+		Debug(dTimer, "S%d  At T%d Received HearBeat From S%d At T%d",
+			rf.me, rf.currentTerm, args.LeaderId, args.Term)
 	} else {
-		DPrintf("{Node %v} with term %v receive AppendEntries from {Node %v} with term %v, Return True", rf.me, rf.currentTerm, args.LeaderId, args.Term)
+		Debug(dTimer, "S%d  At T%d Received AppEnt From S%d At T%d, Return True",
+			rf.me, rf.currentTerm, args.LeaderId, args.Term)
 	}
 }
 
@@ -356,14 +362,16 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 }
 
 func (rf *Raft) broadcastAppendEntries() {
-	DPrintf("{Node %v} with term %v is broadcasting AppendEntries", rf.me, rf.currentTerm)
+	Debug(dTimer, "S%d Leader, checking heartbeats at T%d", rf.me, rf.currentTerm)
 	for i := range rf.peers {
 		if i == rf.me {
 			continue
 		}
-		go func(peer int) {
+		args := rf.genAppendEntriesArgs(i)
+		go func(args AppendEntriesArgs, peer int) {
 			rf.mu.Lock()
-			args := rf.genAppendEntriesArgs(peer)
+			Debug(dLog, "S%d -> S%d Sending PLI: %d, PLT: %d, LC: %d --[%v] at T%d",
+				rf.me, peer, args.PrevLogIndex, args.PrevLogTerm, args.LeaderCommit, args.Entries, args.Term)
 			rf.mu.Unlock()
 			reply := AppendEntriesReply{}
 			if rf.sendAppendEntries(peer, &args, &reply) {
@@ -371,20 +379,24 @@ func (rf *Raft) broadcastAppendEntries() {
 				defer rf.mu.Unlock()
 				if args.Term == rf.currentTerm && rf.state == LeaderState {
 					if reply.Term > rf.currentTerm {
+						Debug(dLog, "S%d <- S%d Bad Append and T Change(%d -> %d)",
+							rf.me, peer, rf.currentTerm, reply.Term)
 						rf.changeState(FollowerState)
 						rf.currentTerm = reply.Term
 					} else {
 						if reply.Success {
 							rf.matchIndex[peer] = args.PrevLogIndex + len(args.Entries)
 							rf.nextIndex[peer] = args.PrevLogIndex + len(args.Entries) + 1
+							Debug(dLog, "S%d <- S%d OK Append MI: %d, NI: %d", rf.me, peer, rf.matchIndex[peer], rf.nextIndex[peer])
 							rf.leaderIncreaseCommit()
 						} else {
 							rf.nextIndex[peer]--
+							Debug(dLog, "S%d <- S%d Bad Append MI: %d, NI: %d", rf.me, peer, rf.matchIndex[peer], rf.nextIndex[peer])
 						}
 					}
 				}
 			}
-		}(i)
+		}(args, i)
 	}
 }
 
@@ -426,7 +438,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		rf.matchIndex[rf.me] = len(rf.log) - 1
 		rf.broadcastAppendEntries()
 		rf.heartbeatTimer.Reset(HeartBeatInterval)
-		// DPrintf("{Node %v} start successed index is %v, command is %v, term is %v", rf.me, index, command, term)
 	}
 	return index, term, isLeader
 }
@@ -476,7 +487,8 @@ func (rf *Raft) ticker() {
 }
 func (rf *Raft) startNewElection() {
 	args := rf.genRequestVoteArgs()
-	DPrintf("{Node %v} starts election with RequestVoteArgs %v\n", rf.me, args)
+	// DPrintf("{Node %v} starts election with RequestVoteArgs %v\n", rf.me, args)
+	Debug(dVote, "S%d starts election at T%d", rf.me, rf.currentTerm)
 	votes := 1
 	rf.votedFor = rf.me
 	for i := 0; i < len(rf.peers); i++ {
@@ -490,15 +502,20 @@ func (rf *Raft) startNewElection() {
 				defer rf.mu.Unlock()
 				if rf.currentTerm == args.Term && rf.state == CandidateState {
 					if reply.VoteGranted {
+						Debug(dVote, "S%d <- S%d Got Vote", rf.me, i)
 						votes++
 						if votes > len(rf.peers)/2 {
 							// DPrintf("{Node %v} receives majority votes in term %v", rf.me, rf.currentTerm)
+							Debug(dLeader, "S%d Achieved Majority for T%d (%d), converting to Leader",
+								rf.me, rf.currentTerm, votes)
 							rf.changeState(LeaderState)
 							rf.broadcastAppendEntries()
 							votes = 0
 						}
 					} else if reply.Term > rf.currentTerm {
-						DPrintf("{Node %v} finds a new leader {Node %v} with term %v and steps down in term %v", rf.me, i, reply.Term, rf.currentTerm)
+						// DPrintf("{Node %v} finds a new leader {Node %v} with term %v and steps down in term %v", rf.me, i, reply.Term, rf.currentTerm)
+						Debug(dLeader, "S%d with T%d finds a new leader S%d with T%d, converting to Follower",
+							rf.me, rf.currentTerm, i, reply.Term)
 						rf.changeState(FollowerState)
 						rf.currentTerm = reply.Term
 					}
@@ -527,7 +544,8 @@ func (rf *Raft) applyLog() {
 		}
 		rf.CanApply = false
 		rf.mu.Unlock()
-		DPrintf("{Node %v} is applying MsgSet %v", rf.me, applyMsgSet)
+		// DPrintf("{Node %v} is applying MsgSet %v", rf.me, applyMsgSet)
+		Debug(dLog2, "S%d Saved Log %v", rf.me, applyMsgSet)
 		for i := range applyMsgSet {
 			rf.applyChan <- applyMsgSet[i]
 		}
@@ -613,7 +631,8 @@ func (rf *Raft) genAppendEntriesArgs(peer int) AppendEntriesArgs {
 
 // 改变状态发现不能只将state改了,还应该改变raft中其他一些属性,遂添加一个辅助函数
 func (rf *Raft) changeState(target int) {
-	DPrintf("{Node %v} change its state to %v", rf.me, states[target])
+	// DPrintf("{Node %v} change its state to %v", rf.me, states[target])
+	Debug(dInfo, "S%d change state(%v -> %v)", rf.me, states[rf.state], states[target])
 	if target == FollowerState {
 		rf.state = FollowerState
 		rf.votedFor = -1
@@ -665,7 +684,8 @@ func (rf *Raft) leaderIncreaseCommit() {
 	}
 	if isIncrease {
 		rf.commitIndex = i
-		DPrintf("{Node %v} change its commitIndex from %v to %v", rf.me, oldCommitIndex, rf.commitIndex)
+		// DPrintf("{Node %v} change its commitIndex from %v to %v", rf.me, oldCommitIndex, rf.commitIndex)
+		Debug(dCommit, "S%d change commitIndex from %d to %d", rf.me, oldCommitIndex, rf.commitIndex)
 		rf.CanApply = true
 		rf.cond.Broadcast()
 		return
