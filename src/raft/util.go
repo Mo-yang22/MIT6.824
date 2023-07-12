@@ -66,3 +66,70 @@ func Debug(topic logTopic, format string, a ...interface{}) {
 		log.Printf(format, a...)
 	}
 }
+
+// 获取最大的GlobalIndex
+func (rf *Raft) getLastIndex() int {
+	return len(rf.log) - 1 + rf.lastIncludedIndex
+}
+
+// // 给定GlobalIndex,得到LogEntry
+//
+//	func (rf *Raft) restoreLog(curIndex int) LogEntry {
+//		return rf.log[curIndex-rf.lastIncludedIndex]
+//	}
+func (rf *Raft) global2Local(curIndex int) int {
+	return curIndex - rf.lastIncludedIndex
+}
+
+func max(a int, b int) int {
+	if a >= b {
+		return a
+	} else {
+		return b
+	}
+}
+func min(a int, b int) int {
+	if a < b {
+		return a
+	} else {
+		return b
+	}
+}
+func (rf *Raft) trimLog(args *AppendEntriesArgs) {
+	// isDifferent := false
+	// j := args.PrevLogIndex + 1
+	// for i := range args.Entries {
+	// 	if j >= rf.getLastIndex()+1 || j > rf.lastIncludedIndex && rf.log[rf.global2Local(j)].Term != args.Entries[i].Term {
+	// 		isDifferent = true
+	// 		break
+	// 	}
+	// 	j++
+	// }
+	// if isDifferent {
+	// 	rf.log = rf.log[0:rf.global2Local(args.PrevLogIndex+1)]
+	// 	rf.log = append(rf.log, args.Entries...)
+	// 	rf.persist()
+	// }
+	// i表示本地的索引,j表示entries中的索引
+	i := args.PrevLogIndex + 1
+	j := 0
+	for ; j < len(args.Entries); j++ {
+		if (i - rf.lastIncludedIndex) < 1 {
+			i++
+			continue
+		}
+		if i > rf.getLastIndex() {
+			rf.log = rf.log[:rf.global2Local(i)]
+			rf.log = append(rf.log, args.Entries[j:]...)
+			break
+		}
+		if rf.log[rf.global2Local(i)].Term == args.Entries[j].Term {
+			i++
+		} else if rf.log[rf.global2Local(i)].Term != args.Entries[j].Term {
+			rf.log = rf.log[:rf.global2Local(i)]
+			rf.log = append(rf.log, args.Entries[j:]...)
+			break
+		}
+	}
+	rf.persist()
+}
