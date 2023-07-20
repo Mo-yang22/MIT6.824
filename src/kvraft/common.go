@@ -20,7 +20,7 @@ type PutAppendArgs struct {
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
 	ClientId  int64
-	RequestId int64
+	RequestId int
 }
 
 type PutAppendReply struct {
@@ -36,7 +36,7 @@ type GetArgs struct {
 	Key string
 	// You'll have to add definitions here.
 	ClientId  int64
-	RequestId int64
+	RequestId int
 }
 
 type GetReply struct {
@@ -46,5 +46,5 @@ type GetReply struct {
 }
 
 func (a GetReply) String() string {
-	return fmt.Sprintf("Err is %v, value is %v, LeaderId is %d", a.Err, a.Value, a.LeaderId)
+	return fmt.Sprintf("Err is %v, LeaderId is %d", a.Err, a.LeaderId)
 }

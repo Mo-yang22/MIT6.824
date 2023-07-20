@@ -1,15 +1,19 @@
 package kvraft
 
-import "6.824/labrpc"
+import (
+	"6.824/labrpc"
+	"sync"
+)
 import "crypto/rand"
 import "math/big"
 
 type Clerk struct {
 	servers []*labrpc.ClientEnd
 	// You will have to modify this struct.
-	leaderHint int
-	clientId   int64
-	requestId  int64
+	lastLeader           int        //上一次RPC发现的主机id
+	mu                   sync.Mutex //锁
+	clientId             int64      //client唯一id
+	lastAppliedCommandId int        //Command的唯一id
 }
 
 func nrand() int64 {
@@ -23,42 +27,47 @@ func MakeClerk(servers []*labrpc.ClientEnd) *Clerk {
 	ck := new(Clerk)
 	ck.servers = servers
 	// You'll have to add code here.
+	ck.lastLeader = 0
 	ck.clientId = nrand()
-	ck.requestId = 0
-	ck.leaderHint = 0
+	ck.lastAppliedCommandId = 0
 	return ck
 }
 
+// Get
 // fetch the current value for a key.
 // returns "" if the key does not exist.
 // keeps trying forever in the face of all other errors.
 //
 // you can send an RPC with code like this:
-// ok := ck.servers[i].Call("KVServer.Get", &args, &reply)
+// ok := ck.servers[i].Call("KVServer.Get", &args, &Reply)
 //
-// the types of args and reply (including whether they are pointers)
+// the types of args and Reply (including whether they are pointers)
 // must match the declared types of the RPC handler function's
-// arguments. and reply must be passed as a pointer.
+// arguments. and Reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) string {
+
+	// You will have to modify this function.
+	commandId := ck.lastAppliedCommandId + 1
 	args := GetArgs{
 		Key:       key,
 		ClientId:  ck.clientId,
-		RequestId: ck.requestId,
+		RequestId: commandId,
 	}
-	serverIndex := ck.leaderHint
-	DPrintf("C%d: 开始发送Get RPC;args=[%v]\n", ck.clientId, args)
-	for ; ; serverIndex = (serverIndex + 1) % len(ck.servers) {
-		reply := GetReply{}
-		DPrintf("C%d: 开始发送Get RPC;args=[%v]到S%d\n", ck.clientId, args, serverIndex)
-		ok := ck.servers[serverIndex].Call("KVServer.Get", &args, &reply)
-
+	DPrintf("client[%d]: 开始发送Get RPC;args=[%v]\n", ck.clientId, args)
+	//第一个发送的目标server是上一次RPC发现的leader
+	serverId := ck.lastLeader
+	serverNum := len(ck.servers)
+	for ; ; serverId = (serverId + 1) % serverNum {
+		var reply GetReply
+		ok := ck.servers[serverId].Call("KVServer.Get", &args, &reply)
+		//当发送失败或者返回不是leader时,则继续到下一个server进行尝试
 		if !ok || reply.Err == ErrTimeout || reply.Err == ErrWrongLeader {
-			DPrintf("C%d: 发送Get RPC;args=[%v]到S%d失败,ok = %v,Reply=[%v]\n", ck.clientId, args, serverIndex, ok, reply)
 			continue
 		}
-		DPrintf("C%d: 发送Get RPC;args=[%v]到S%d成功,ok = %v,Reply=[%v]\n", ck.clientId, args, serverIndex, ok, reply)
-		ck.leaderHint = serverIndex
-		ck.requestId++
+		DPrintf("client[%d]: 发送Get RPC;args=[%v]到server[%d]成功,Reply=[%v]\n", ck.clientId, args, serverId, reply)
+		//若发送成功,则更新最近发现的leader
+		ck.lastLeader = serverId
+		ck.lastAppliedCommandId = commandId
 		if reply.Err == ErrNoKey {
 			return ""
 		}
@@ -66,46 +75,48 @@ func (ck *Clerk) Get(key string) string {
 	}
 }
 
+// PutAppend
 // shared by Put and Append.
 //
 // you can send an RPC with code like this:
-// ok := ck.servers[i].Call("KVServer.PutAppend", &args, &reply)
+// ok := ck.servers[i].Call("KVServer.PutAppend", &args, &Reply)
 //
-// the types of args and reply (including whether they are pointers)
+// the types of args and Reply (including whether they are pointers)
 // must match the declared types of the RPC handler function's
-// arguments. and reply must be passed as a pointer.
+// arguments. and Reply must be passed as a pointer.
 func (ck *Clerk) PutAppend(key string, value string, op string) {
+	//fmt.Println("key=", key, "value=", value, "op=", op)
+	// You will have to modify this function.
+	commandId := ck.lastAppliedCommandId + 1
 	args := PutAppendArgs{
 		Key:       key,
 		Value:     value,
 		Op:        op,
 		ClientId:  ck.clientId,
-		RequestId: ck.requestId,
+		RequestId: commandId,
 	}
-	serverIndex := ck.leaderHint
-	DPrintf("C%d: 开始发送PutAppend RPC;args=[%v]\n", ck.clientId, args)
-	for ; ; serverIndex = (serverIndex + 1) % len(ck.servers) {
-		reply := PutAppendReply{}
-		DPrintf("C%d: 开始发送PutAppend RPC;args=[%v]到S%d\n", ck.clientId, args, serverIndex)
-		ok := ck.servers[serverIndex].Call("KVServer.PutAppend", &args, &reply)
+	//第一个发送的目标server是上一次RPC发现的leader
+	DPrintf("client[%d]: 开始发送PutAppend RPC;args=[%v]\n", ck.clientId, args)
+	serverId := ck.lastLeader
+	serverNum := len(ck.servers)
+	for ; ; serverId = (serverId + 1) % serverNum {
+		var reply PutAppendReply
+		ok := ck.servers[serverId].Call("KVServer.PutAppend", &args, &reply)
+		//当发送失败或者返回不是leader时,则继续到下一个server进行尝试
 		if !ok || reply.Err == ErrTimeout || reply.Err == ErrWrongLeader {
-			DPrintf("C%d: 发送PutAppend RPC;args=[%v]到S%d失败,ok = %v,Reply=[%v]\n", ck.clientId, args, serverIndex, ok, reply)
 			continue
 		}
-		DPrintf("C%d: 发送Get RPC;args=[%v]到S%d成功,ok = %v,Reply=[%v]\n", ck.clientId, args, serverIndex, ok, reply)
-		ck.leaderHint = serverIndex
-		ck.requestId++
+		DPrintf("client[%d]: 发送PutAppend RPC;args=[%v]到server[%d]成功,Reply=[%v]\n", ck.clientId, args, serverId, reply)
+		//若发送成功,则更新最近发现的leader以及commandId
+		ck.lastLeader = serverId
+		ck.lastAppliedCommandId = commandId
 		return
 	}
 }
 
 func (ck *Clerk) Put(key string, value string) {
-	DPrintf("C%d trying to Put [%v, %v] ", ck.clientId, key, value)
 	ck.PutAppend(key, value, "Put")
-	DPrintf("C%d finish to Put [%v, %v] ", ck.clientId, key, value)
 }
 func (ck *Clerk) Append(key string, value string) {
-	DPrintf("C%d trying to Append [%v, %v] ", ck.clientId, key, value)
 	ck.PutAppend(key, value, "Append")
-	DPrintf("C%d finish to Append [%v, %v] ", ck.clientId, key, value)
 }

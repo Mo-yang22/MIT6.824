@@ -667,8 +667,8 @@ func (rf *Raft) broadcastAppendEntries() {
 			continue
 		}
 		args := rf.genAppendEntriesArgs(i)
-		nextTerm := 0
-		if args.PrevLogIndex > rf.getLastIndex() {
+		nextTerm := rf.log[0].Term
+		if args.PrevLogIndex > rf.lastIncludedIndex-1 && args.PrevLogIndex+1 < rf.getLastIndex() {
 			nextTerm = rf.log[rf.global2Local(args.PrevLogIndex+1)].Term
 		}
 		Debug(dError, "S%d args.LC is %d", rf.me, args.LeaderCommit)
@@ -707,18 +707,17 @@ func (rf *Raft) broadcastAppendEntries() {
 							if reply.XLen != -1 {
 								rf.nextIndex[peer] = min(nextIndex-reply.XLen, rf.nextIndex[peer])
 							} else {
-
 								// 先得到本地的log上一个不同的term
-								lastIndex := nextIndex - 1
-								for lastIndex > 0 && rf.log[rf.global2Local(lastIndex)].Term == nextTerm {
+								lastIndex := args.PrevLogIndex
+								for lastIndex > rf.lastIncludedIndex && rf.log[rf.global2Local(lastIndex)].Term == nextTerm {
 									lastIndex--
 								}
 								// 情况一
-								if rf.log[rf.global2Local(lastIndex)].Term != reply.Xterm {
-									rf.nextIndex[peer] = min(reply.XIndex, rf.nextIndex[peer])
+								if lastIndex >= rf.lastIncludedIndex && rf.log[rf.global2Local(lastIndex)].Term == reply.Xterm {
+									rf.nextIndex[peer] = min(lastIndex+1, rf.nextIndex[peer])
 								} else {
 									//情况二
-									rf.nextIndex[peer] = min(lastIndex+1, rf.nextIndex[peer])
+									rf.nextIndex[peer] = min(reply.XIndex, rf.nextIndex[peer])
 								}
 							}
 							Debug(dLog, "S%d <- S%d Bad Append MI: %d, NI: %d", rf.me, peer, rf.matchIndex[peer], rf.nextIndex[peer])
@@ -799,4 +798,10 @@ func RandomizedElectionTimeout() time.Duration {
 	maxDuration := 600 * time.Millisecond
 	randomDuration := time.Duration(rand.Int63n(int64(maxDuration-minDuration)) + int64(minDuration))
 	return randomDuration
+}
+func (rf *Raft) ReadRaftSize() int {
+	return rf.persister.RaftStateSize()
+}
+func (rf *Raft) GetSnapshot() []byte {
+	return rf.persister.ReadSnapshot()
 }
